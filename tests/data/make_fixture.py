@@ -8,6 +8,7 @@ from pathlib import Path
 import anndata as ad
 import numpy as np
 import pandas as pd
+from scipy import sparse
 
 N_OBS = 200
 N_VARS = 50
@@ -48,6 +49,10 @@ def main() -> None:
     adata = ad.AnnData(X=X, obs=obs, var=var)
     adata.obsm["X_umap"] = rng.standard_normal((N_OBS, 2)).astype(np.float32)
     adata.layers["counts"] = rng.integers(0, 100, (N_OBS, N_VARS)).astype(np.float32)
+    # obsp exists so the fixture covers `cell2zarr convert`'s sparse obsp path.
+    adata.obsp["connectivities"] = sparse.random(
+        N_OBS, N_OBS, density=0.02, format="csr", dtype=np.float32, random_state=0
+    )
     adata.uns["method"] = "fixture"
 
     out = Path(__file__).parent / "tiny.h5ad"

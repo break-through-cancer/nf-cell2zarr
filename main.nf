@@ -3,7 +3,6 @@
 nextflow.enable.dsl = 2
 
 include { CONVERT }      from './modules/local/convert'
-include { ADD_KEYS }     from './modules/local/add_keys'
 include { ADD_LAYER }    from './modules/local/add_layer'
 include { CONSOLIDATE }  from './modules/local/consolidate'
 include { BUILD_STRATA } from './modules/local/build_strata'
@@ -21,25 +20,16 @@ workflow NF_CELL2ZARR {
               "Loom and Seurat files in a Single-Cell Dataset are not supported."
     }
 
-    def cheap_keys = (params.add_keys   ?: '').tokenize(',')*.trim().findAll { it }
     def layer_keys = (params.add_layers ?: '').tokenize(',')*.trim().findAll { it }
 
     ch_input = Channel.of( tuple([id: h5ad.simpleName], h5ad) )
 
     CONVERT(ch_input)
 
-    // One task for all cheap keys: they are fast to write, so staging the
-    // base store dominates and splitting them would pay that cost per key.
-    ch_key_groups = Channel.empty()
-    if (cheap_keys) {
-        ADD_KEYS(
-            CONVERT.out.zarr.map { meta, zarr -> tuple(meta, zarr, h5ad, cheap_keys) }
-        )
-        ch_key_groups = ADD_KEYS.out.groups
-    }
-
-    // Genuine fan-out: layers go through the two-phase path and are expensive
-    // enough that a parallel task pays for its staging.
+    // `cell2zarr convert` already writes every key present in the h5ad except
+    // layers/, so layers are all that is left to add. Genuine fan-out: they go
+    // through the two-phase path and are expensive enough that a parallel task
+    // pays for its staging.
     ch_layer_groups = Channel.empty()
     if (layer_keys) {
         ADD_LAYER(
@@ -50,8 +40,7 @@ workflow NF_CELL2ZARR {
         ch_layer_groups = ADD_LAYER.out.groups
     }
 
-    ch_groups = ch_key_groups
-        .mix(ch_layer_groups)
+    ch_groups = ch_layer_groups
         .map { meta, groups -> groups }
         .flatten()
         .collect()

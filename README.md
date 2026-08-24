@@ -28,8 +28,7 @@ emulation — fine for tests, and irrelevant on AWS Batch.
 | `var_chunk_size` | `1` | Genes per chunk. One gene per chunk means a single-gene fetch reads one chunk. |
 | `shard_size` | `30` | Genes per shard. Keeps the object count down. |
 | `dtype` | `float16` | Output dtype. |
-| `add_keys` | `obs,var,obsm` | Comma-separated cheap keys, added in one task. |
-| `add_layers` | — | Comma-separated layer names, one task each. |
+| `add_layers` | — | Comma-separated layer names, one task each. `convert` writes every other key already; `layers/` is the only thing left to add. |
 | `atomic_axes` | — | Comma-separated obs columns. Strata are built only when set. |
 | `coarse` | — | Semicolon-separated coarse table specs, e.g. `cell_type;cell_type,treatment`. |
 | `max_atomic_cardinality` | — | Reject the strata build above this many atomic strata. |

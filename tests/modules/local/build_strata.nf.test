@@ -38,22 +38,12 @@ nextflow_process {
                     """
                 }
             }
-            run("ADD_KEYS") {
-                script "modules/local/add_keys.nf"
-                process {
-                    """
-                    input[0] = CONVERT.out.zarr.map { meta, z ->
-                        [ meta, z, file("${projectDir}/tests/data/tiny.h5ad"), ['obs', 'var'] ]
-                    }
-                    """
-                }
-            }
             run("CONSOLIDATE") {
                 script "modules/local/consolidate.nf"
                 process {
                     """
                     input[0] = CONVERT.out.zarr
-                    input[1] = ADD_KEYS.out.groups.map { meta, g -> g }.flatten().collect()
+                    input[1] = []
                     """
                 }
             }

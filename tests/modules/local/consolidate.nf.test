@@ -39,12 +39,12 @@ nextflow_process {
                     """
                 }
             }
-            run("ADD_KEYS") {
-                script "modules/local/add_keys.nf"
+            run("ADD_LAYER") {
+                script "modules/local/add_layer.nf"
                 process {
                     """
                     input[0] = CONVERT.out.zarr.map { meta, z ->
-                        [ meta, z, file("${projectDir}/tests/data/tiny.h5ad"), ['obs', 'obsm'] ]
+                        [ meta, z, file("${projectDir}/tests/data/tiny.h5ad"), 'counts' ]
                     }
                     """
                 }
@@ -55,7 +55,7 @@ nextflow_process {
             process {
                 """
                 input[0] = CONVERT.out.zarr
-                input[1] = ADD_KEYS.out.groups.map { meta, g -> g }.flatten().collect()
+                input[1] = ADD_LAYER.out.groups.map { meta, g -> g }.flatten().collect()
                 """
             }
         }
@@ -68,7 +68,7 @@ nextflow_process {
 
             assert root.consolidated_metadata != null
             assert root.consolidated_metadata.metadata.containsKey('obs')
-            assert root.consolidated_metadata.metadata.containsKey('obsm')
+            assert root.consolidated_metadata.metadata.containsKey('layers')
             assert root.consolidated_metadata.metadata.containsKey('X')
         }
     }

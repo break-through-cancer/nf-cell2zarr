@@ -28,7 +28,6 @@ nextflow_workflow {
         when {
             params {
                 input       = "${projectDir}/tests/data/tiny.h5ad"
-                add_keys    = "obs,var,obsm"
                 add_layers  = "counts"
                 atomic_axes = null
             }
@@ -37,7 +36,6 @@ nextflow_workflow {
         then {
             assert workflow.success
             assert workflow.trace.tasks().any { it.name.contains('CONVERT') }
-            assert workflow.trace.tasks().any { it.name.contains('ADD_KEYS') }
             assert workflow.trace.tasks().any { it.name.contains('ADD_LAYER') }
             assert workflow.trace.tasks().any { it.name.contains('CONSOLIDATE') }
             assert !workflow.trace.tasks().any { it.name.contains('BUILD_STRATA') }
@@ -51,7 +49,6 @@ nextflow_workflow {
         when {
             params {
                 input       = "${projectDir}/tests/data/tiny.h5ad"
-                add_keys    = "obs,var"
                 add_layers  = null
                 atomic_axes = "cell_type"
             }
