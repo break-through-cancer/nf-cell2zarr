@@ -1,0 +1,65 @@
+nextflow_process {
+
+    name "Test Process ADD_LAYER"
+    script "modules/local/add_layer.nf"
+    process "ADD_LAYER"
+
+    test("stub emits a layers group") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [id: 'tiny'],
+                    file("${projectDir}/tests/data/tiny.zarr"),
+                    file("${projectDir}/tests/data/tiny.h5ad"),
+                    'counts'
+                ]
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            // A single emitted path arrives as a String, not a List — flatten so the
+            // assertion holds whether one or many directories come back.
+            def dirs = [process.out.groups[0][1]].flatten()
+            assert dirs.collect { file(it.toString()).name } == ['layers']
+        }
+    }
+
+    test("real add writes layers/counts") {
+        tag "container"
+
+        setup {
+            run("CONVERT") {
+                script "modules/local/convert.nf"
+                process {
+                    """
+                    input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.h5ad") ]
+                    """
+                }
+            }
+        }
+
+        when {
+            process {
+                """
+                input[0] = CONVERT.out.zarr.map { meta, z ->
+                    [ meta, z, file("${projectDir}/tests/data/tiny.h5ad"), 'counts' ]
+                }
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def layers = [process.out.groups[0][1]].flatten().find { it.toString().endsWith('/layers') }
+            assert layers != null
+            assert path("${layers}/counts").exists()
+        }
+    }
+}
