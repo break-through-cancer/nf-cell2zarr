@@ -1,0 +1,75 @@
+nextflow_process {
+
+    name "Test Process CONSOLIDATE"
+    script "modules/local/consolidate.nf"
+    process "CONSOLIDATE"
+
+    test("stub emits the final named store") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            process {
+                """
+                input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.zarr") ]
+                input[1] = []
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def store = path("${process.out.zarr[0][1]}")
+            assert store.exists()
+            assert file("${store}").name == 'tiny.zarr'
+            assert path("${store}/zarr.json").exists()
+        }
+    }
+
+    test("merges groups and consolidates the root") {
+        tag "container"
+
+        setup {
+            run("CONVERT") {
+                script "modules/local/convert.nf"
+                process {
+                    """
+                    input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.h5ad") ]
+                    """
+                }
+            }
+            run("ADD_KEYS") {
+                script "modules/local/add_keys.nf"
+                process {
+                    """
+                    input[0] = CONVERT.out.zarr.map { meta, z ->
+                        [ meta, z, file("${projectDir}/tests/data/tiny.h5ad"), ['obs', 'obsm'] ]
+                    }
+                    """
+                }
+            }
+        }
+
+        when {
+            process {
+                """
+                input[0] = CONVERT.out.zarr
+                input[1] = ADD_KEYS.out.groups.map { meta, g -> g }.flatten().collect()
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def store = path("${process.out.zarr[0][1]}")
+            def root  = new groovy.json.JsonSlurper().parse(file("${store}/zarr.json"))
+
+            assert root.consolidated_metadata != null
+            assert root.consolidated_metadata.metadata.containsKey('obs')
+            assert root.consolidated_metadata.metadata.containsKey('obsm')
+            assert root.consolidated_metadata.metadata.containsKey('X')
+        }
+    }
+}
