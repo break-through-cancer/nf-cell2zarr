@@ -1,0 +1,66 @@
+nextflow_workflow {
+
+    name "Test full pipeline"
+    script "main.nf"
+    workflow "NF_CELL2ZARR"
+
+    test("rejects a non-h5ad input") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input = "${projectDir}/tests/data/tiny.loom"
+            }
+        }
+
+        then {
+            assert workflow.failed
+            assert workflow.stdout.any { it.contains('.h5ad input only') } ||
+                   workflow.errorReport.contains('.h5ad input only')
+        }
+    }
+
+    test("without strata axes the run ends at CONSOLIDATE") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny.h5ad"
+                add_keys    = "obs,var,obsm"
+                add_layers  = "counts"
+                atomic_axes = null
+            }
+        }
+
+        then {
+            assert workflow.success
+            assert workflow.trace.tasks().any { it.name.contains('CONVERT') }
+            assert workflow.trace.tasks().any { it.name.contains('ADD_KEYS') }
+            assert workflow.trace.tasks().any { it.name.contains('ADD_LAYER') }
+            assert workflow.trace.tasks().any { it.name.contains('CONSOLIDATE') }
+            assert !workflow.trace.tasks().any { it.name.contains('BUILD_STRATA') }
+        }
+    }
+
+    test("with strata axes BUILD_STRATA runs") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny.h5ad"
+                add_keys    = "obs,var"
+                add_layers  = null
+                atomic_axes = "cell_type"
+            }
+        }
+
+        then {
+            assert workflow.success
+            assert workflow.trace.tasks().any { it.name.contains('BUILD_STRATA') }
+            assert !workflow.trace.tasks().any { it.name.contains('ADD_LAYER') }
+        }
+    }
+}
