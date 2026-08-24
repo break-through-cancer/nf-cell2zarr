@@ -29,6 +29,9 @@ jobs:
       - name: Generate the test fixture
         run: uv run --with anndata --with scipy python tests/data/make_fixture.py
 
+      - name: Test the preprocess script
+        run: uv run --frozen --group dev pytest tests/test_preprocess.py -v
+
       # nf-test --tag is include-only; it has no negation. `--tag "!container"`
       # silently matches nothing and reports success, so every test carries an
       # explicit tag and we select positively.
