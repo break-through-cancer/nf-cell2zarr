@@ -1,0 +1,9 @@
+.nextflow*
+work/
+results/
+.nf-test/
+.nf-test.log
+docs/
+tests/data/*.h5ad
+__pycache__/
+.venv/

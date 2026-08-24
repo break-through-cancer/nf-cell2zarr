@@ -1,0 +1,49 @@
+nextflow_process {
+
+    name "Test Process CONVERT"
+    script "modules/local/convert.nf"
+    process "CONVERT"
+
+    test("stub produces a zarr group and a log") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            process {
+                """
+                input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.h5ad") ]
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert path("${process.out.zarr[0][1]}").exists()
+            assert path("${process.out.zarr[0][1]}/zarr.json").exists()
+        }
+    }
+
+    test("real conversion writes a zarr v3 store with X") {
+        tag "container"
+
+        when {
+            process {
+                """
+                input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.h5ad") ]
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def store = path("${process.out.zarr[0][1]}")
+            assert store.exists()
+
+            def root = new groovy.json.JsonSlurper().parse(file("${store}/zarr.json"))
+            assert root.zarr_format == 3
+
+            assert path("${store}/X").exists()
+        }
+    }
+}
