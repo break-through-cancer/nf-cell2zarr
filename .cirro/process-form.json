@@ -1,0 +1,90 @@
+{
+  "ui": {},
+  "form": {
+    "type": "object",
+    "properties": {
+      "conversion": {
+        "type": "object",
+        "title": "Conversion",
+        "properties": {
+          "two_phase": {
+            "type": "boolean",
+            "title": "Two-phase streaming conversion",
+            "description": "Keeps memory bounded regardless of dataset size. Recommended.",
+            "default": true
+          },
+          "cell_chunk_size": {
+            "type": "integer",
+            "title": "Cells per chunk (phase 1)",
+            "description": "Affects phase-1 streaming only; does not appear in the output layout.",
+            "default": 10000,
+            "minimum": 1
+          },
+          "var_chunk_size": {
+            "type": "integer",
+            "title": "Genes per chunk",
+            "description": "One gene per chunk means a single-gene fetch reads exactly one chunk.",
+            "default": 1,
+            "minimum": 1
+          },
+          "shard_size": {
+            "type": "integer",
+            "title": "Genes per shard",
+            "description": "Zarr v3 sharding. Larger shards mean fewer objects in S3.",
+            "default": 30,
+            "minimum": 1
+          },
+          "dtype": {
+            "type": "string",
+            "title": "Output dtype",
+            "enum": ["float16", "float32", "float64"],
+            "default": "float16"
+          },
+          "normalize": {
+            "type": "boolean",
+            "title": "Normalize and log1p",
+            "description": "Applies scanpy normalize_total + log1p. Two-phase only.",
+            "default": false
+          },
+          "n_top_genes": {
+            "type": "integer",
+            "title": "Filter to top N highly variable genes",
+            "description": "Leave blank to keep all genes."
+          }
+        }
+      },
+      "keys": {
+        "type": "object",
+        "title": "Layers",
+        "properties": {
+          "add_layers": {
+            "type": "string",
+            "title": "Layers to add",
+            "description": "Comma-separated layer names. Each runs as its own parallel task. Leave blank for none. Every other key (X, obs, var, obsm, obsp, uns) is written by the conversion itself."
+          }
+        }
+      },
+      "strata": {
+        "type": "object",
+        "title": "Strata tables (optional)",
+        "properties": {
+          "atomic_axes": {
+            "type": "string",
+            "title": "Atomic axes",
+            "description": "Comma-separated obs column names. Leave blank to skip building strata entirely."
+          },
+          "coarse": {
+            "type": "string",
+            "title": "Coarse tables",
+            "description": "Semicolon-separated specs; each spec is one column or a comma-separated list. Example: cell_type;cell_type,treatment"
+          },
+          "max_atomic_cardinality": {
+            "type": "integer",
+            "title": "Maximum atomic cardinality",
+            "description": "Reject the build above this many atomic strata. Default 50000."
+          }
+        }
+      }
+    }
+  }
+}

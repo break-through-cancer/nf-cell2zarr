@@ -1,0 +1,13 @@
+{
+  "two_phase": "$.conversion.two_phase",
+  "cell_chunk_size": "$.conversion.cell_chunk_size",
+  "var_chunk_size": "$.conversion.var_chunk_size",
+  "shard_size": "$.conversion.shard_size",
+  "dtype": "$.conversion.dtype",
+  "normalize": "$.conversion.normalize",
+  "n_top_genes": "$.conversion.n_top_genes",
+  "add_layers": "$.keys.add_layers",
+  "atomic_axes": "$.strata.atomic_axes",
+  "coarse": "$.strata.coarse",
+  "max_atomic_cardinality": "$.strata.max_atomic_cardinality"
+}
