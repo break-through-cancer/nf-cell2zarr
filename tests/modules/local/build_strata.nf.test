@@ -1,0 +1,79 @@
+nextflow_process {
+
+    name "Test Process BUILD_STRATA"
+    script "modules/local/build_strata.nf"
+    process "BUILD_STRATA"
+
+    test("stub emits the store with an atomic strata group") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                atomic_axes = "cell_type,treatment"
+                coarse      = "cell_type;cell_type,treatment"
+            }
+            process {
+                """
+                input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.zarr") ]
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert path("${process.out.zarr[0][1]}/uns/strata/atomic").exists()
+        }
+    }
+
+    test("builds strata for the fixture's categorical columns") {
+        tag "container"
+
+        setup {
+            run("CONVERT") {
+                script "modules/local/convert.nf"
+                process {
+                    """
+                    input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.h5ad") ]
+                    """
+                }
+            }
+            run("ADD_KEYS") {
+                script "modules/local/add_keys.nf"
+                process {
+                    """
+                    input[0] = CONVERT.out.zarr.map { meta, z ->
+                        [ meta, z, file("${projectDir}/tests/data/tiny.h5ad"), ['obs', 'var'] ]
+                    }
+                    """
+                }
+            }
+            run("CONSOLIDATE") {
+                script "modules/local/consolidate.nf"
+                process {
+                    """
+                    input[0] = CONVERT.out.zarr
+                    input[1] = ADD_KEYS.out.groups.map { meta, g -> g }.flatten().collect()
+                    """
+                }
+            }
+        }
+
+        when {
+            params {
+                atomic_axes = "cell_type,treatment"
+                coarse      = "cell_type;cell_type,treatment"
+            }
+            process {
+                """
+                input[0] = CONSOLIDATE.out.zarr
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert path("${process.out.zarr[0][1]}/uns/strata/atomic").exists()
+        }
+    }
+}
