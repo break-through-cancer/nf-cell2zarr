@@ -1,0 +1,66 @@
+nextflow_process {
+
+    name "Test Process ADD_KEYS"
+    script "modules/local/add_keys.nf"
+    process "ADD_KEYS"
+
+    test("stub emits one directory per top-level key") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            process {
+                """
+                input[0] = [
+                    [id: 'tiny'],
+                    file("${projectDir}/tests/data/tiny.zarr"),
+                    file("${projectDir}/tests/data/tiny.h5ad"),
+                    ['obs', 'var', 'obsm/X_umap']
+                ]
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def names = process.out.groups[0][1].collect { file(it.toString()).name }
+            assert names.sort() == ['obs', 'obsm', 'var']
+        }
+    }
+
+    test("real add writes obs and obsm without consolidating") {
+        tag "container"
+
+        setup {
+            run("CONVERT") {
+                script "modules/local/convert.nf"
+                process {
+                    """
+                    input[0] = [ [id: 'tiny'], file("${projectDir}/tests/data/tiny.h5ad") ]
+                    """
+                }
+            }
+        }
+
+        when {
+            process {
+                """
+                input[0] = CONVERT.out.zarr.map { meta, z ->
+                    [ meta, z, file("${projectDir}/tests/data/tiny.h5ad"), ['obs', 'obsm'] ]
+                }
+                """
+            }
+        }
+
+        then {
+            assert process.success
+
+            def names = process.out.groups[0][1].collect { file(it.toString()).name }
+            assert names.sort() == ['obs', 'obsm']
+
+            // the emitted groups are real, and nothing consolidated the root
+            assert path("${process.out.groups[0][1].find { it.toString().endsWith('/obs') }}/zarr.json").exists()
+        }
+    }
+}
