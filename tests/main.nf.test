@@ -60,4 +60,45 @@ nextflow_workflow {
             assert !workflow.trace.tasks().any { it.name.contains('ADD_LAYER') }
         }
     }
+
+    test("prepare=true runs PREPARE ahead of CONVERT") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny_merge.h5ad"
+                outdir      = "${outputDir}"
+                prepare     = true
+                add_layers  = null
+                atomic_axes = null
+            }
+        }
+
+        then {
+            assert workflow.success
+            assert workflow.trace.tasks().any { it.name.contains('PREPARE') }
+            assert workflow.trace.tasks().any { it.name.contains('CONVERT') }
+            assert path("${outputDir}/prepared/provenance.json").exists()
+        }
+    }
+
+    test("prepare=false (the default) never runs PREPARE") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny.h5ad"
+                prepare     = false
+                add_layers  = null
+                atomic_axes = null
+            }
+        }
+
+        then {
+            assert workflow.success
+            assert !workflow.trace.tasks().any { it.name.contains('PREPARE') }
+        }
+    }
 }

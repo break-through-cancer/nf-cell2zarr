@@ -2,6 +2,7 @@
 
 nextflow.enable.dsl = 2
 
+include { PREPARE }      from './modules/local/prepare'
 include { CONVERT }      from './modules/local/convert'
 include { ADD_LAYER }    from './modules/local/add_layer'
 include { CONSOLIDATE }  from './modules/local/consolidate'
@@ -24,7 +25,16 @@ workflow NF_CELL2ZARR {
 
     ch_input = Channel.of( tuple([id: h5ad.simpleName], h5ad) )
 
-    CONVERT(ch_input)
+    // Optional: embed and annotate the raw merge so the converted store is
+    // ready for cell-explorer. Off by default; everything downstream reads
+    // whichever h5ad this channel carries.
+    ch_h5ad = ch_input
+    if (params.prepare) {
+        PREPARE(ch_input)
+        ch_h5ad = PREPARE.out.h5ad
+    }
+
+    CONVERT(ch_h5ad)
 
     // `cell2zarr convert` already writes every key present in the h5ad except
     // layers/, so layers are all that is left to add. Genuine fan-out: they go
@@ -34,8 +44,9 @@ workflow NF_CELL2ZARR {
     if (layer_keys) {
         ADD_LAYER(
             CONVERT.out.zarr
+                .join(ch_h5ad)
                 .combine(Channel.fromList(layer_keys))
-                .map { meta, zarr, layer -> tuple(meta, zarr, h5ad, layer) }
+                .map { meta, zarr, src, layer -> tuple(meta, zarr, src, layer) }
         )
         ch_layer_groups = ADD_LAYER.out.groups
     }
