@@ -41,6 +41,10 @@ jobs:
       - name: Run stub tests
         run: nf-test test --tag stub
 
+      - name: Build the PREPARE image
+        if: inputs.run_container_tests
+        run: docker build --platform linux/amd64 -t nf-cell2zarr-prepare:dev containers/prepare
+
       - name: Run container tests
         if: inputs.run_container_tests
         run: nf-test test --tag container --profile test,docker
