@@ -135,3 +135,35 @@ def test_x_compared_across_blocks(pair, capsys, monkeypatch):
     monkeypatch.setattr(cmp, "BLOCK", 2)
     code, out = run(capsys, *pair)
     assert code == 0, out
+
+
+def test_inlined_merge_rule_agrees_with_prepare_h5ad():
+    spec = importlib.util.spec_from_file_location(
+        "prepare_h5ad", Path(__file__).parent.parent / "bin" / "prepare_h5ad.py"
+    )
+    prep = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prep)
+
+    frames = [
+        pd.DataFrame({"modality": ["GEX", "NA", "NA", "NA"], "Modality": ["NA", "GEX", None, "NA"]}),
+        pd.DataFrame({"modality": ["RNA", "", np.nan, "None", "nan", "RNA"],
+                      "Modality": ["", "ATAC", "ATAC", "ATAC", "ATAC", "RNA"]}),
+        make_obs(True)[["modality", "Modality"]],
+        ad.read_h5ad(Path(__file__).parent / "data" / "tiny_merge.h5ad").obs[["modality", "Modality"]],
+    ]
+    for frame in frames:
+        expected = frame.copy()
+        prep.merge_case_duplicate_columns(expected)
+        got = cmp.merge_modality(frame["modality"], frame["Modality"])
+        assert list(got.astype(str)) == list(expected["modality"].astype(str))
+
+
+def test_script_does_not_depend_on_the_repo_layout(tmp_path):
+    import shutil
+    import subprocess
+
+    alone = tmp_path / "compare_prepared.py"
+    shutil.copy(Path(cmp.__file__), alone)
+    out = subprocess.run([sys.executable, str(alone), "--help"], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert "importlib" not in alone.read_text()  # no loading of ../bin by path

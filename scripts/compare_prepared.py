@@ -18,9 +18,7 @@ merge-only PREPARE does not produce.
 """
 
 import argparse
-import importlib.util
 import sys
-from pathlib import Path
 
 import anndata as ad
 import h5py
@@ -32,13 +30,21 @@ IDENTITY = ["library", "site", "patient", "tcr_status"]
 DOUBLETS = {"is_doublet", "scdbl_score", "doublet_status"}
 
 
-def load_prepare():
-    path = Path(__file__).resolve().parent.parent / "bin" / "prepare_h5ad.py"
-    spec = importlib.util.spec_from_file_location("prepare_h5ad", path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["prepare_h5ad"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+MISSING = ["", "NA", "nan", "None"]
+
+
+def _missing(s: pd.Series) -> pd.Series:
+    return s.isna() | s.astype(str).isin(MISSING)
+
+
+def merge_modality(kept: pd.Series, other: pd.Series) -> pd.Series:
+    """Fill `kept` from `other` only where kept is missing and other is present.
+
+    Inlined from bin/prepare_h5ad.merge_case_duplicate_columns so this script runs
+    alone on the cluster; tests/test_compare_prepared.py checks the two agree.
+    """
+    kept, other = kept.astype(object), other.astype(object)
+    return kept.where(~_missing(kept) | _missing(other), other)
 
 
 def read_frame(f, key):
@@ -114,13 +120,10 @@ def main(argv=None):
         # Candidate modality = reference modality filled from Modality, by the
         # same rule PREPARE used to merge the case-duplicate columns.
         if "modality" in co and "modality" in ro and len(ro) == len(co):
-            prep = load_prepare()
-            pair = ro[["modality"] + (["Modality"] if "Modality" in ro else [])].copy()
-            try:
-                prep.merge_case_duplicate_columns(pair)
-                problem = None if same_values(pair["modality"], co["modality"]) else "values differ"
-            except SystemExit as e:
-                problem = f"reference modality columns conflict: {e}"
+            merged = merge_modality(
+                ro["modality"], ro["Modality"] if "Modality" in ro else ro["modality"]
+            )
+            problem = None if same_values(merged, co["modality"]) else "values differ"
             report("modality", problem)
         else:
             report("modality", "column missing or cell counts differ")
