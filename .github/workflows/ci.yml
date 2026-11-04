@@ -32,6 +32,9 @@ jobs:
       - name: Test the preprocess script
         run: uv run --frozen --group dev pytest tests/test_preprocess.py -v
 
+      - name: Test the prepare script
+        run: uv run --with-requirements containers/prepare/requirements.txt --group dev pytest tests/test_prepare.py -v
+
       # nf-test --tag is include-only; it has no negation. `--tag "!container"`
       # silently matches nothing and reports success, so every test carries an
       # explicit tag and we select positively.
