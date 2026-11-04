@@ -16,7 +16,10 @@ nextflow_workflow {
 
         then {
             assert workflow.failed
+            // Nextflow 26 on Linux prints a workflow `error` to stderr; 25.x and
+            // macOS print it to stdout. Accept either stream.
             assert workflow.stdout.any { it.contains('.h5ad input only') } ||
+                   workflow.stderr.any { it.contains('.h5ad input only') } ||
                    workflow.errorReport.contains('.h5ad input only')
         }
     }
