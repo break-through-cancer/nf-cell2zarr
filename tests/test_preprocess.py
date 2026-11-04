@@ -29,11 +29,18 @@ class FakeDataset:
         self.params = dict(params)
         self.logger = FakeLogger()
 
-    def add_param(self, key, value, overwrite=True):
-        self.params[key] = value
+    # Mirrors cirro.helpers.preprocess_dataset.PreprocessDataset (cirro 1.10.1),
+    # including its asserts, so a call the real SDK would reject fails here too.
+    def add_param(self, name, value, overwrite=False, log=True):
+        assert overwrite or name not in self.params, \
+            f"Cannot add parameter {name}, already exists (and overwrite=False)"
+        self.params[name] = value
 
-    def remove_param(self, key, force=False):
-        self.params.pop(key, None)
+    def remove_param(self, name, force=False):
+        assert force or name in self.params, \
+            f"Cannot remove parameter {name}, does not exist (and force=False)"
+        if name in self.params:
+            del self.params[name]
 
 
 def test_resolves_the_single_h5ad():
@@ -170,3 +177,33 @@ def test_blank_prepare_params_are_removed_so_defaults_apply():
     for name in ("n_hvg", "n_pcs", "library_column", "site_regex"):
         assert name not in ds.params
     assert ds.params["n_neighbors"] == 15
+
+
+def test_prepare_false_with_no_h5ad_name_key_at_all():
+    ds = FakeDataset(["s3://b/a.h5ad"], {"two_phase": True, "prepare": False})
+    preprocess.run(ds)
+    assert ds.params["input"] == "s3://b/a.h5ad"
+
+
+def test_run_with_atomic_axes_set_succeeds():
+    ds = FakeDataset(
+        ["s3://b/a.h5ad"],
+        {"two_phase": True, "atomic_axes": "cell_type", "add_layers": "counts", "coarse": "a;b"},
+    )
+    preprocess.run(ds)
+    assert ds.params["atomic_axes"] == "cell_type"
+
+
+def test_run_overwrites_a_preexisting_input_param():
+    ds = FakeDataset(["s3://b/a.h5ad"], {"two_phase": True, "input": "s3://stale"})
+    preprocess.run(ds)
+    assert ds.params["input"] == "s3://b/a.h5ad"
+
+
+def test_prepare_rejects_ambiguous_h5ad_name():
+    ds = FakeDataset(
+        ["s3://b/x/merged.h5ad", "s3://b/y/merged.h5ad"],
+        {"two_phase": True, "prepare": True, "h5ad_name": "merged.h5ad"},
+    )
+    with pytest.raises(ValueError, match=r"more than one.*x/merged\.h5ad.*y/merged\.h5ad"):
+        preprocess.run(ds)

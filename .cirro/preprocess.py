@@ -70,6 +70,11 @@ def _resolve_input(ds):
                 f"Preparation was asked to use '{name}', but the input dataset "
                 f"has no .h5ad file with that name. Found: {h5ads}"
             )
+        if len(matches) > 1:
+            raise ValueError(
+                f"Preparation was asked to use '{name}', but more than one "
+                f".h5ad file has that name: {matches}"
+            )
         return matches[0]
 
     if len(h5ads) > 1:
@@ -104,10 +109,14 @@ def _clean_optional(ds):
     for name in OPTIONAL:
         value = ds.params.get(name)
         if value is None or (isinstance(value, str) and not value.strip()):
-            ds.remove_param(name)
+            ds.remove_param(name, force=True)
         elif isinstance(value, str):
             # " cell_type , treatment " -> "cell_type,treatment"
-            ds.add_param(name, ",".join(p.strip() for p in value.split(",") if p.strip()))
+            ds.add_param(
+                name,
+                ",".join(p.strip() for p in value.split(",") if p.strip()),
+                overwrite=True,
+            )
 
 
 def _clean_prepare(ds):
@@ -115,7 +124,7 @@ def _clean_prepare(ds):
     for name in PREPARE_OPTIONAL:
         value = ds.params.get(name)
         if value is None or (isinstance(value, str) and not value.strip()):
-            ds.remove_param(name)
+            ds.remove_param(name, force=True)
 
 
 def run(ds):
@@ -125,8 +134,8 @@ def run(ds):
     _clean_prepare(ds)
 
     h5ad = _resolve_input(ds)
-    ds.remove_param("h5ad_name")  # consumed above; Nextflow has no such param
-    ds.add_param("input", h5ad)
+    ds.remove_param("h5ad_name", force=True)  # consumed above; Nextflow has no such param
+    ds.add_param("input", h5ad, overwrite=True)
 
     ds.logger.info(f"nf-cell2zarr input: {h5ad}")
     ds.logger.info(f"nf-cell2zarr params: {ds.params}")
