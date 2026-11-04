@@ -59,6 +59,35 @@ def main() -> None:
     adata.write_h5ad(out)
     print(f"wrote {out} ({out.stat().st_size} bytes)")
 
+    make_merge_fixture()
+
+
+def make_merge_fixture() -> None:
+    """A merge-shaped object for tests/test_prepare.py: integer counts, both
+    indexes named like the column they duplicate, case-duplicate obs columns."""
+    rng = np.random.default_rng(0)
+    n_vars = 60
+    X = sparse.csr_matrix(rng.poisson(1, (N_OBS, n_vars)).astype(np.float64))
+    obs_index = INDEX([f"cell_{i}" for i in range(N_OBS)])
+    obs_index.name = "bpcells_name"
+    var_index = INDEX([f"gene_{i}" for i in range(n_vars)])
+    var_index.name = "bpcells_name"
+    libs = ["BTC-GBM-001-002-GEX_S2_L002", "GBM1.DFCI1.S1", "JHU1-S1"]
+    obs = pd.DataFrame(
+        {
+            "orig.ident": [libs[i % 3] for i in range(N_OBS)],
+            "tcr_has_tcr_match": [i % 2 == 0 for i in range(N_OBS)],
+            "modality": ["GEX" if i % 2 == 0 else "NA" for i in range(N_OBS)],
+            "Modality": ["NA" if i % 2 == 0 else "GEX" for i in range(N_OBS)],
+        },
+        index=obs_index,
+    )
+    # Same dtype as the index, or anndata calls the column's values "different".
+    var = pd.DataFrame({"bpcells_name": var_index.to_series().astype(object)}, index=var_index)
+    out = Path(__file__).parent / "tiny_merge.h5ad"
+    ad.AnnData(X=X, obs=obs, var=var).write_h5ad(out)
+    print(f"wrote {out} ({out.stat().st_size} bytes)")
+
 
 if __name__ == "__main__":
     main()

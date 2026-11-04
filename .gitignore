@@ -7,3 +7,5 @@ docs/
 tests/data/*.h5ad
 __pycache__/
 .venv/
+.worktrees/
+.superpowers/

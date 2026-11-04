@@ -1,0 +1,57 @@
+nextflow_process {
+
+    name "Test Process PREPARE"
+    script "modules/local/prepare.nf"
+    process "PREPARE"
+
+    test("stub emits a prepared h5ad, provenance and a log") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            process {
+                """
+                input[0] = [ [id: 'tiny_merge'], file("${projectDir}/tests/data/tiny_merge.h5ad") ]
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert path("${process.out.h5ad[0][1]}").fileName.toString() == 'tiny_merge.prepared.h5ad'
+            assert path("${process.out.provenance[0]}").fileName.toString() == 'provenance.json'
+        }
+    }
+
+    test("real run prepares the fixture and records provenance") {
+        tag "container"
+        config "./prepare.container.config"
+
+        when {
+            params {
+                // local image from containers/prepare; the default is the published sha- tag
+                prepare_container = 'nf-cell2zarr-prepare:dev'
+                n_hvg             = 20
+                n_pcs             = 10
+                n_neighbors       = 10
+            }
+            process {
+                """
+                input[0] = [ [id: 'tiny_merge'], file("${projectDir}/tests/data/tiny_merge.h5ad") ]
+                """
+            }
+        }
+
+        then {
+            assert process.success
+            assert path("${process.out.h5ad[0][1]}").exists()
+
+            def prov = new groovy.json.JsonSlurper().parse(file("${process.out.provenance[0]}"))
+            assert prov.file.n_obs == 200
+
+            // regexes contain backslashes; they must reach the script unmangled
+            assert prov.parameters.site_regex == '(DFCI-?\\d+|JHU\\d+|MSK\\d+|GBM-001)'
+            assert prov.parameters.patient_regex == 'GBM-001-(\\d{3})'
+        }
+    }
+}

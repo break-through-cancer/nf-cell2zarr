@@ -16,7 +16,10 @@ nextflow_workflow {
 
         then {
             assert workflow.failed
+            // Nextflow 26 on Linux prints a workflow `error` to stderr; 25.x and
+            // macOS print it to stdout. Accept either stream.
             assert workflow.stdout.any { it.contains('.h5ad input only') } ||
+                   workflow.stderr.any { it.contains('.h5ad input only') } ||
                    workflow.errorReport.contains('.h5ad input only')
         }
     }
@@ -58,6 +61,70 @@ nextflow_workflow {
             assert workflow.success
             assert workflow.trace.tasks().any { it.name.contains('BUILD_STRATA') }
             assert !workflow.trace.tasks().any { it.name.contains('ADD_LAYER') }
+        }
+    }
+
+    test("prepare=true runs PREPARE ahead of CONVERT") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny_merge.h5ad"
+                outdir      = "${outputDir}"
+                prepare     = true
+                prepare_container = 'example.invalid/nf-cell2zarr-prepare:stub'
+                add_layers  = null
+                atomic_axes = null
+            }
+        }
+
+        then {
+            assert workflow.success
+            assert workflow.trace.tasks().any { it.name.contains('PREPARE') }
+            assert workflow.trace.tasks().any { it.name.contains('CONVERT') }
+            assert path("${outputDir}/prepared/provenance.json").exists()
+        }
+    }
+
+    test("prepare=false (the default) never runs PREPARE") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny.h5ad"
+                prepare     = false
+                add_layers  = null
+                atomic_axes = null
+            }
+        }
+
+        then {
+            assert workflow.success
+            assert !workflow.trace.tasks().any { it.name.contains('PREPARE') }
+        }
+    }
+
+    test("prepare=true with the placeholder image tag stops early") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny_merge.h5ad"
+                outdir      = "${outputDir}"
+                prepare     = true
+                add_layers  = null
+                atomic_axes = null
+            }
+        }
+
+        then {
+            assert workflow.failed
+            assert workflow.stdout.any { it.contains('PREPARE image tag has not been set') } ||
+                   workflow.stderr.any { it.contains('PREPARE image tag has not been set') }
+            assert !workflow.trace.tasks().any { it.name.contains('PREPARE') }
         }
     }
 }

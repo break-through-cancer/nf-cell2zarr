@@ -84,6 +84,76 @@
             "description": "Reject the build above this many atomic strata. Default 50000."
           }
         }
+      },
+      "preparation": {
+        "type": "object",
+        "title": "Preparation (optional)",
+        "properties": {
+          "prepare": {
+            "type": "boolean",
+            "title": "Prepare a raw merge before conversion",
+            "description": "Embeds and annotates the input (HVG, PCA, neighbors, UMAP, Leiden, site/patient/TCR labels). Outputs are published under prepared/.",
+            "default": false
+          },
+          "h5ad_name": {
+            "type": "string",
+            "title": "Input h5ad file name",
+            "description": "Which .h5ad in the input dataset to prepare. Used only when preparation is on.",
+            "default": "merged.h5ad"
+          },
+          "n_hvg": {
+            "type": "integer",
+            "title": "Highly variable genes",
+            "default": 3000,
+            "minimum": 1
+          },
+          "n_pcs": {
+            "type": "integer",
+            "title": "Principal components",
+            "default": 50,
+            "minimum": 1
+          },
+          "n_neighbors": {
+            "type": "integer",
+            "title": "Neighbors",
+            "default": 15,
+            "minimum": 1
+          },
+          "leiden_resolution": {
+            "type": "number",
+            "title": "Leiden resolution",
+            "default": 1.0
+          },
+          "library_column": {
+            "type": "string",
+            "title": "Library column",
+            "description": "obs column identifying the sequencing library.",
+            "default": "orig.ident"
+          },
+          "site_regex": {
+            "type": "string",
+            "title": "Site regex",
+            "description": "Applied to the library column to extract the site.",
+            "default": "(DFCI-?\\d+|JHU\\d+|MSK\\d+|GBM-001)"
+          },
+          "patient_regex": {
+            "type": "string",
+            "title": "Patient regex",
+            "description": "Applied to the library column; capture group 1 is the patient number.",
+            "default": "GBM-001-(\\d{3})"
+          },
+          "patient_prefix": {
+            "type": "string",
+            "title": "Patient prefix",
+            "default": "GBM001-P"
+          },
+          "tcr_column": {
+            "type": "string",
+            "title": "TCR column",
+            "description": "obs column marking TCR matches. Leave blank to skip tcr_status.",
+            "default": "tcr_has_tcr_match"
+          }
+        }
       }
     }
   }
