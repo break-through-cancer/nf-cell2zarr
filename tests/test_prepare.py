@@ -100,6 +100,22 @@ def test_check_input_rejects_non_integer_x_when_normalizing():
     assert prep.check_input(adata, normalize=False) == []
 
 
+def test_check_input_checks_every_block(monkeypatch):
+    monkeypatch.setattr(prep, "BLOCK", 4)
+    x = np.ones((3, 4), dtype=np.float32)
+    x[2, 3] = 0.5  # beyond the first block
+    assert prep.check_input(ad.AnnData(X=x), normalize=True)
+    x[2, 3] = -1.0
+    assert prep.check_input(ad.AnnData(X=x), normalize=True)
+    assert prep.check_input(ad.AnnData(X=np.ones((3, 4), dtype=np.float32)), normalize=True) == []
+
+
+def test_pinned_versions_match_requirements_names():
+    reqs = Path(__file__).parent.parent / "containers" / "prepare" / "requirements.txt"
+    names = {re.split(r"[=<>]", l)[0] for l in reqs.read_text().splitlines() if l.strip()}
+    assert set(prep.pinned_versions()) == names
+
+
 def test_check_prepared_names_every_problem():
     obs = pd.DataFrame(
         {"lib": ["a", "b"], "x": [1, 2], "X": [1, 2], "flag": [True, False]},

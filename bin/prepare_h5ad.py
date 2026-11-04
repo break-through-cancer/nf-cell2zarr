@@ -105,17 +105,21 @@ def merge_case_duplicate_columns(obs: pd.DataFrame) -> list[str]:
     return dropped
 
 
+BLOCK = 10_000_000  # values checked at a time, to bound temporary memory
+
+
 def check_input(adata, normalize: bool) -> list[str]:
     # Normalizing an object that is already normalized silently gives a wrong
-    # embedding, so require raw counts. Only a leading slice is inspected: a
-    # normalized matrix shows fractions immediately and this stays cheap at 36 GB.
+    # embedding, so require raw counts. A merge can hold per-library pieces, so
+    # every stored value is checked, in blocks.
     if not normalize:
         return []
-    values = adata.X.data if sparse.issparse(adata.X) else np.asarray(adata.X).ravel()
-    values = np.asarray(values[:10_000_000])
-    if not np.all(values == np.round(values)):
-        return ["X is not integer-valued; --normalize needs raw counts "
-                "(this object looks already normalized)."]
+    values = adata.X.data if sparse.issparse(adata.X) else np.asarray(adata.X).reshape(-1)
+    for start in range(0, values.shape[0], BLOCK):
+        block = np.asarray(values[start:start + BLOCK])
+        if not np.all(block == np.round(block)) or (block < 0).any():
+            return ["X is not non-negative integer counts; --normalize needs raw counts "
+                    "(this object looks already normalized)."]
     return []
 
 
@@ -182,11 +186,14 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
+# Names only; the pins live in containers/prepare/requirements.txt. Kept here
+# because Nextflow stages bin/ scripts without the rest of the repo.
+PINNED_PACKAGES = ("scanpy", "anndata", "pandas", "numpy", "scipy", "h5py", "igraph",
+                   "leidenalg", "umap-learn", "numba", "scikit-learn")
+
+
 def pinned_versions() -> dict[str, str]:
-    reqs = Path(__file__).resolve().parent.parent / "containers" / "prepare" / "requirements.txt"
-    names = [re.split(r"[=<>]", line)[0].strip()
-             for line in reqs.read_text().splitlines() if line.strip()]
-    return {n: importlib.metadata.version(n) for n in names}
+    return {n: importlib.metadata.version(n) for n in PINNED_PACKAGES}
 
 
 def parse_args(argv):
@@ -216,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     sc.settings.n_jobs = args.threads
     steps = []
+    environment = pinned_versions()  # fail now, not after the write
 
     adata = sc.read_h5ad(args.input)
     steps.append(f"read {adata.n_obs:,} x {adata.n_vars:,}")
@@ -261,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                    "sha256": sha256_of(src)},
         "parameters": vars(args),
         "pipeline": {"revision": args.pipeline_revision, "container": args.container},
-        "environment": pinned_versions(),
+        "environment": environment,
         "steps": steps,
         "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
