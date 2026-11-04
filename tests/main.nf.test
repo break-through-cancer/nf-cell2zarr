@@ -70,6 +70,7 @@ nextflow_workflow {
                 input       = "${projectDir}/tests/data/tiny_merge.h5ad"
                 outdir      = "${outputDir}"
                 prepare     = true
+                prepare_container = 'example.invalid/nf-cell2zarr-prepare:stub'
                 add_layers  = null
                 atomic_axes = null
             }
@@ -98,6 +99,28 @@ nextflow_workflow {
 
         then {
             assert workflow.success
+            assert !workflow.trace.tasks().any { it.name.contains('PREPARE') }
+        }
+    }
+
+    test("prepare=true with the placeholder image tag stops early") {
+        tag "stub"
+        options "-stub"
+
+        when {
+            params {
+                input       = "${projectDir}/tests/data/tiny_merge.h5ad"
+                outdir      = "${outputDir}"
+                prepare     = true
+                add_layers  = null
+                atomic_axes = null
+            }
+        }
+
+        then {
+            assert workflow.failed
+            assert workflow.stdout.any { it.contains('PREPARE image tag has not been set') } ||
+                   workflow.stderr.any { it.contains('PREPARE image tag has not been set') }
             assert !workflow.trace.tasks().any { it.name.contains('PREPARE') }
         }
     }

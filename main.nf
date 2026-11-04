@@ -14,6 +14,11 @@ workflow NF_CELL2ZARR {
         error "params.input is required: the path to an .h5ad file"
     }
 
+    if (params.prepare && params.prepare_container.contains('REPLACE_AFTER_TASK_3')) {
+        error "params.prepare is true but params.prepare_container still holds the " +
+              "placeholder tag (${params.prepare_container}): the PREPARE image tag has not been set."
+    }
+
     def h5ad = file(params.input, checkIfExists: true)
 
     if (!h5ad.name.endsWith('.h5ad')) {

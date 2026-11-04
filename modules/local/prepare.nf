@@ -13,10 +13,13 @@ process PREPARE {
     path "prepare.log",                                emit: log
 
     script:
+    // --normalize here only checks that X holds integer counts; X is written
+    // raw and CONVERT does the normalization.
     def norm = params.normalize ? '--normalize' : ''
     // Regexes are single-quoted so the shell leaves their backslashes alone;
     // Groovy interpolation does not touch backslashes inside a param value.
     """
+    export NUMBA_NUM_THREADS=${task.cpus} OMP_NUM_THREADS=${task.cpus}
     prepare_h5ad.py \\
         --input ${h5ad} \\
         --output ${meta.id}.prepared.h5ad \\
@@ -29,12 +32,13 @@ process PREPARE {
         --site-regex '${params.site_regex}' \\
         --patient-regex '${params.patient_regex}' \\
         --patient-prefix '${params.patient_prefix}' \\
-        --tcr-column '${params.tcr_column}' \\
+        --tcr-column '${params.tcr_column ?: ''}' \\
         --atomic-axes '${params.atomic_axes ?: ''}' \\
         ${norm} \\
         --threads ${task.cpus} \\
         --pipeline-revision '${workflow.commitId ?: workflow.revision ?: 'local'}' \\
         --container '${task.container}' \\
+        --source-uri '${params.input ?: ''}' \\
         2> >(tee prepare.log >&2)
     """
 

@@ -7,3 +7,6 @@ RUN apt-get update \
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
+# numba caches compiled code next to the package; the Batch task user may not own it.
+ENV NUMBA_CACHE_DIR=/tmp/numba
