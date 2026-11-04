@@ -127,16 +127,27 @@ def test_check_prepared_names_every_problem():
         assert needle in text
 
 
+def cli_args(tmp_path, *extra):
+    return ["--input", FIXTURE, "--output", str(tmp_path / "out.h5ad"),
+            "--provenance", str(tmp_path / "provenance.json"),
+            "--n-hvg", "20", "--n-pcs", "10", "--n-neighbors", "10", *extra]
+
+
 def test_cli_end_to_end_on_fixture(tmp_path):
     rc = prep.main(["--input", FIXTURE, "--output", str(tmp_path / "out.h5ad"),
                     "--provenance", str(tmp_path / "provenance.json"),
                     "--n-hvg", "20", "--n-pcs", "10", "--n-neighbors", "10",
                     "--atomic-axes", "leiden,library,patient,site,tcr_status",
                     "--normalize", "--threads", "2",
+                    "--source-uri", "s3://bucket/merged.h5ad",
                     "--pipeline-revision", "test", "--container", "test"])
     assert rc == 0
     out = ad.read_h5ad(tmp_path / "out.h5ad")
     assert out.X.dtype == np.float32
+    src = ad.read_h5ad(FIXTURE)
+    assert np.array_equal(out.X.toarray(), src.X.astype(np.float32).toarray())
+    assert list(out.obs["leiden"].cat.categories) == sorted(
+        out.obs["leiden"].cat.categories, key=int)
     assert "Modality" not in out.obs and "modality" in out.obs
     assert {"library", "site", "patient", "tcr_status", "leiden"} <= set(out.obs)
     assert out.obsm["X_pca"].shape == (200, 10) and out.obsm["X_umap"].shape == (200, 2)
@@ -148,6 +159,9 @@ def test_cli_end_to_end_on_fixture(tmp_path):
     assert prov["file"]["sha256"] == hashlib.sha256((tmp_path / "out.h5ad").read_bytes()).hexdigest()
     assert prov["file"]["n_obs"] == 200
     assert prov["environment"]["scanpy"] == "1.12.5"
+    assert prov["source"]["uri"] == "s3://bucket/merged.h5ad"
+    assert prov["source"]["path"] == FIXTURE
+    assert "doublet flags not added: no singlets companion (merge-only path)" in prov["steps"]
 
 
 def test_cli_fails_fast_on_bad_input(tmp_path):
@@ -160,3 +174,61 @@ def test_cli_fails_fast_on_bad_input(tmp_path):
     assert rc != 0
     assert not (tmp_path / "out.h5ad").exists()
     assert not (tmp_path / "provenance.json").exists()
+
+
+def test_check_config_reports_everything_at_once():
+    adata = make_adata(x=["a", "b"])
+    problems = prep.check_config(adata, "orig.ident", "tcr_col",
+                                 ["doublet_status", "leiden", "x", "tcr_status", "nope"])
+    text = "\n".join(problems)
+    for needle in ("'orig.ident'", "'tcr_col'", "'doublet_status'", "'nope'"):
+        assert needle in text
+    assert "'x'" not in text and "'leiden'" not in text
+    # tcr_status is only created when a tcr column is named
+    assert any("'tcr_status'" in p for p in prep.check_config(adata, "x", "", ["tcr_status"]))
+    assert prep.check_config(adata, "x", "x", ["tcr_status", "library", "site", "patient"]) == []
+
+
+def test_cli_fails_before_embedding_on_unknown_axis(tmp_path, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise AssertionError("embedding started")
+    monkeypatch.setattr(prep, "embed", boom)
+    rc = prep.main(cli_args(tmp_path, "--atomic-axes", "leiden,doublet_status"))
+    assert rc != 0
+    assert "doublet_status" in capsys.readouterr().err
+    assert not (tmp_path / "out.h5ad").exists()
+    assert not (tmp_path / "provenance.json").exists()
+
+
+def test_cli_fails_on_missing_library_and_tcr_columns(tmp_path, capsys):
+    rc = prep.main(cli_args(tmp_path, "--library-column", "nolib", "--tcr-column", "notcr"))
+    err = capsys.readouterr().err
+    assert rc != 0 and "'nolib'" in err and "'notcr'" in err
+
+
+def test_doublet_step_is_warned(tmp_path, caplog):
+    with caplog.at_level("WARNING", logger="prepare_h5ad"):
+        assert prep.main(cli_args(tmp_path)) == 0
+    assert "doublet flags not added" in caplog.text
+
+
+def test_tcr_status_warns_when_nothing_is_positive(caplog):
+    adata = make_adata(tcr=["false", "0", "no"])
+    with caplog.at_level("INFO", logger="prepare_h5ad"):
+        prep.add_tcr_status(adata, "tcr")
+    assert any(r.levelname == "WARNING" and "0 TCR+" in r.message for r in caplog.records)
+
+
+def test_tcr_status_logs_positive_count(caplog):
+    adata = make_adata(tcr=[True, False, True])
+    with caplog.at_level("INFO", logger="prepare_h5ad"):
+        prep.add_tcr_status(adata, "tcr")
+    assert "2 TCR+ of 3" in caplog.text
+    assert not any(r.levelname == "WARNING" for r in caplog.records)
+
+
+def test_embed_logs_each_step_with_elapsed_seconds(tmp_path, caplog):
+    with caplog.at_level("INFO", logger="prepare_h5ad"):
+        assert prep.main(cli_args(tmp_path)) == 0
+    for step in ("normalize/log1p", "HVG", "scale", "PCA", "neighbors", "UMAP", "Leiden"):
+        assert re.search(rf"{re.escape(step)}.*\d+(\.\d+)?s", caplog.text), step

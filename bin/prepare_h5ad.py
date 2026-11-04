@@ -15,6 +15,8 @@ import json
 import logging
 import re
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -69,6 +71,11 @@ def add_tcr_status(adata, tcr_column: str) -> None:
         return
     # Compare as text: astype(bool) would turn the string "False" into True.
     positive = adata.obs[tcr_column].astype(str) == "True"
+    n_pos = int(positive.sum())
+    log.info("tcr_status: %s TCR+ of %s cells", f"{n_pos:,}", f"{adata.n_obs:,}")
+    if n_pos == 0:
+        log.warning("0 TCR+ cells: column %r holds no value equal to the text 'True' "
+                    "(numeric or lower-case encodings are not recognised)", tcr_column)
     adata.obs["tcr_status"] = pd.Categorical(
         ["TCR+" if p else "TCR-" for p in positive], categories=["TCR-", "TCR+"]
     )
@@ -123,25 +130,56 @@ def check_input(adata, normalize: bool) -> list[str]:
     return []
 
 
+@contextmanager
+def step(name: str):
+    t0 = time.monotonic()
+    log.info("%s: start", name)
+    yield
+    log.info("%s: done in %.1fs", name, time.monotonic() - t0)
+
+
+def check_config(adata, library_column: str, tcr_column: str, atomic_axes: list[str]) -> list[str]:
+    # Everything a bad parameter would break, reported together before any
+    # expensive work. Mirrors what the later steps read.
+    problems = []
+    if library_column not in adata.obs:
+        problems.append(f"library_column {library_column!r} is not an obs column.")
+    if tcr_column and tcr_column not in adata.obs:
+        problems.append(f"tcr_column {tcr_column!r} is not an obs column.")
+    created = {"leiden", "library", "site", "patient"} | ({"tcr_status"} if tcr_column else set())
+    for axis in atomic_axes:
+        if axis not in created and axis not in adata.obs:
+            problems.append(f"atomic axis {axis!r} is neither created by PREPARE nor an obs column.")
+    return problems
+
+
 def embed(adata, n_hvg: int, n_pcs: int, n_neighbors: int, leiden_resolution: float) -> None:
     work = adata.copy()
-    sc.pp.normalize_total(work, target_sum=1e4)
-    sc.pp.log1p(work)
-    sc.pp.highly_variable_genes(work, n_top_genes=n_hvg, flavor="seurat")
-    work = work[:, work.var["highly_variable"]].copy()
-    # Densify the HVG subset (n_cells x n_hvg) so scale does not warn about it.
-    if sparse.issparse(work.X):
-        work.X = work.X.toarray()
-    sc.pp.scale(work, max_value=10)
-    sc.pp.pca(work, n_comps=n_pcs, svd_solver="randomized", random_state=0)
-    sc.pp.neighbors(work, n_neighbors=n_neighbors, n_pcs=n_pcs, random_state=0)
-    sc.tl.umap(work, random_state=0)
-    sc.tl.leiden(work, resolution=leiden_resolution, flavor="igraph", n_iterations=2,
-                 random_state=0)
+    with step("normalize/log1p"):
+        sc.pp.normalize_total(work, target_sum=1e4)
+        sc.pp.log1p(work)
+    with step("HVG"):
+        sc.pp.highly_variable_genes(work, n_top_genes=n_hvg, flavor="seurat")
+        work = work[:, work.var["highly_variable"]].copy()
+    with step("scale"):
+        # Densify the HVG subset (n_cells x n_hvg) so scale does not warn about it.
+        if sparse.issparse(work.X):
+            work.X = work.X.toarray()
+        sc.pp.scale(work, max_value=10)
+    with step("PCA"):
+        sc.pp.pca(work, n_comps=n_pcs, svd_solver="randomized", random_state=0)
+    with step("neighbors"):
+        sc.pp.neighbors(work, n_neighbors=n_neighbors, n_pcs=n_pcs, random_state=0)
+    with step("UMAP"):
+        sc.tl.umap(work, random_state=0)
+    with step("Leiden"):
+        sc.tl.leiden(work, resolution=leiden_resolution, flavor="igraph", n_iterations=2,
+                     random_state=0)
     adata.obsm["X_pca"] = work.obsm["X_pca"].astype(np.float32)
     adata.obsm["X_umap"] = work.obsm["X_umap"].astype(np.float32)
-    # cell2zarr atomic axes must be categorical.
-    adata.obs["leiden"] = pd.Categorical(work.obs["leiden"].to_numpy())
+    # cell2zarr atomic axes must be categorical. Keep scanpy's own categorical
+    # (natural-sorted: "2" before "10"); re-wrapping would sort as text.
+    adata.obs["leiden"] = work.obs["leiden"].values
     adata.var["highly_variable"] = adata.var_names.isin(work.var_names)
 
 
@@ -211,6 +249,7 @@ def parse_args(argv):
     ap.add_argument("--patient-prefix", default="GBM001-P")
     ap.add_argument("--tcr-column", default="tcr_has_tcr_match", help="empty to skip")
     ap.add_argument("--atomic-axes", default="", help="comma-separated; empty for none")
+    ap.add_argument("--source-uri", default="", help="original location of --input")
     ap.add_argument("--normalize", action="store_true")
     ap.add_argument("--threads", type=int, default=16)
     ap.add_argument("--pipeline-revision", default="")
@@ -228,7 +267,9 @@ def main(argv: list[str] | None = None) -> int:
     adata = sc.read_h5ad(args.input)
     steps.append(f"read {adata.n_obs:,} x {adata.n_vars:,}")
 
-    problems = check_input(adata, args.normalize)
+    axes = [a for a in args.atomic_axes.split(",") if a]
+    problems = check_input(adata, args.normalize) + check_config(
+        adata, args.library_column, args.tcr_column, axes)
     if problems:
         print("\n".join(problems), file=sys.stderr)
         return 1
@@ -250,8 +291,10 @@ def main(argv: list[str] | None = None) -> int:
     steps.append(f"embedding: {args.n_hvg} HVGs, {args.n_pcs} PCs, "
                  f"{args.n_neighbors} neighbors, UMAP, Leiden resolution {args.leiden_resolution}")
     finalize_indexes(adata)
+    no_doublets = "doublet flags not added: no singlets companion (merge-only path)"
+    log.warning(no_doublets)
+    steps.append(no_doublets)
 
-    axes = [a for a in args.atomic_axes.split(",") if a]
     problems = check_prepared(adata, axes)
     if problems:
         print("\n".join(problems), file=sys.stderr)
@@ -265,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     provenance = {
         "file": {"name": out.name, "size_bytes": out.stat().st_size, "sha256": sha256_of(out),
                  "n_obs": adata.n_obs, "n_vars": adata.n_vars},
-        "source": {"path": args.input, "size_bytes": src.stat().st_size,
+        "source": {"uri": args.source_uri, "path": args.input, "size_bytes": src.stat().st_size,
                    "sha256": sha256_of(src)},
         "parameters": vars(args),
         "pipeline": {"revision": args.pipeline_revision, "container": args.container},
