@@ -1,15 +1,26 @@
 #!/usr/bin/env python3
 """Prepare a merged h5ad for cell2zarr / Cell Explorer.
 
-Ported from the on-cluster prepare_gbm.py. This part adds the identity columns
-(library, site, patient), the TCR status and merges obs columns whose names
-differ only by case.
+Ported from the on-cluster prepare_gbm.py. Adds the identity columns (library,
+site, patient), the TCR status, merges obs columns whose names differ only by
+case, computes the PCA / UMAP / Leiden embedding on a normalized copy (X keeps
+raw counts), checks the result and writes the h5ad plus provenance.json.
 """
 
+import argparse
+import datetime
+import hashlib
+import importlib.metadata
+import json
 import logging
 import re
+import sys
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import scanpy as sc
+from scipy import sparse
 
 log = logging.getLogger("prepare_h5ad")
 
@@ -92,3 +103,171 @@ def merge_case_duplicate_columns(obs: pd.DataFrame) -> list[str]:
         dropped.extend(drop)
         log.info("merged obs columns %s into %r", drop, keep)
     return dropped
+
+
+def check_input(adata, normalize: bool) -> list[str]:
+    # Normalizing an object that is already normalized silently gives a wrong
+    # embedding, so require raw counts. Only a leading slice is inspected: a
+    # normalized matrix shows fractions immediately and this stays cheap at 36 GB.
+    if not normalize:
+        return []
+    values = adata.X.data if sparse.issparse(adata.X) else np.asarray(adata.X).ravel()
+    values = np.asarray(values[:10_000_000])
+    if not np.all(values == np.round(values)):
+        return ["X is not integer-valued; --normalize needs raw counts "
+                "(this object looks already normalized)."]
+    return []
+
+
+def embed(adata, n_hvg: int, n_pcs: int, n_neighbors: int, leiden_resolution: float) -> None:
+    work = adata.copy()
+    sc.pp.normalize_total(work, target_sum=1e4)
+    sc.pp.log1p(work)
+    sc.pp.highly_variable_genes(work, n_top_genes=n_hvg, flavor="seurat")
+    work = work[:, work.var["highly_variable"]].copy()
+    # Densify the HVG subset (n_cells x n_hvg) so scale does not warn about it.
+    if sparse.issparse(work.X):
+        work.X = work.X.toarray()
+    sc.pp.scale(work, max_value=10)
+    sc.pp.pca(work, n_comps=n_pcs, svd_solver="randomized", random_state=0)
+    sc.pp.neighbors(work, n_neighbors=n_neighbors, n_pcs=n_pcs, random_state=0)
+    sc.tl.umap(work, random_state=0)
+    sc.tl.leiden(work, resolution=leiden_resolution, flavor="igraph", n_iterations=2,
+                 random_state=0)
+    adata.obsm["X_pca"] = work.obsm["X_pca"].astype(np.float32)
+    adata.obsm["X_umap"] = work.obsm["X_umap"].astype(np.float32)
+    # cell2zarr atomic axes must be categorical.
+    adata.obs["leiden"] = pd.Categorical(work.obs["leiden"].to_numpy())
+    adata.var["highly_variable"] = adata.var_names.isin(work.var_names)
+
+
+def finalize_indexes(adata) -> None:
+    # An index name shared with a column breaks zarr writing once cell2zarr makes
+    # the column categorical. Object dtype keeps anndata writing `_index` as a flat
+    # array: pandas 3 infers StringDtype, which anndata writes as a values+mask
+    # group that cell2zarr cannot read as an array.
+    for df in (adata.obs, adata.var):
+        df.index.name = None
+        df.index = df.index.astype(object)
+
+
+def check_prepared(adata, atomic_axes: list[str]) -> list[str]:
+    problems = []
+    for label, df in (("obs", adata.obs), ("var", adata.var)):
+        name = df.index.name
+        if name is not None and name in df.columns:
+            problems.append(f"{label} index name {name!r} is also a {label} column.")
+    groups = {}
+    for col in adata.obs.columns:
+        groups.setdefault(col.lower(), []).append(col)
+    for cols in groups.values():
+        if len(cols) > 1:
+            problems.append(f"obs columns {cols} differ only by case.")
+    for key in ("X_pca", "X_umap"):
+        if key not in adata.obsm:
+            problems.append(f"obsm[{key!r}] is missing.")
+    for axis in atomic_axes:
+        if axis not in adata.obs:
+            problems.append(f"atomic axis {axis!r} is not an obs column.")
+        elif not isinstance(adata.obs[axis].dtype, pd.CategoricalDtype):
+            problems.append(f"atomic axis {axis!r} is {adata.obs[axis].dtype}, not categorical.")
+    return problems
+
+
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while block := f.read(16 * 1024 * 1024):
+            h.update(block)
+    return h.hexdigest()
+
+
+def pinned_versions() -> dict[str, str]:
+    reqs = Path(__file__).resolve().parent.parent / "containers" / "prepare" / "requirements.txt"
+    names = [re.split(r"[=<>]", line)[0].strip()
+             for line in reqs.read_text().splitlines() if line.strip()]
+    return {n: importlib.metadata.version(n) for n in names}
+
+
+def parse_args(argv):
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--input", required=True)
+    ap.add_argument("--output", required=True)
+    ap.add_argument("--provenance", required=True)
+    ap.add_argument("--n-hvg", type=int, default=3000)
+    ap.add_argument("--n-pcs", type=int, default=50)
+    ap.add_argument("--n-neighbors", type=int, default=15)
+    ap.add_argument("--leiden-resolution", type=float, default=1.0)
+    ap.add_argument("--library-column", default="orig.ident")
+    ap.add_argument("--site-regex", default=r"(DFCI-?\d+|JHU\d+|MSK\d+|GBM-001)")
+    ap.add_argument("--patient-regex", default=r"GBM-001-(\d{3})")
+    ap.add_argument("--patient-prefix", default="GBM001-P")
+    ap.add_argument("--tcr-column", default="tcr_has_tcr_match", help="empty to skip")
+    ap.add_argument("--atomic-axes", default="", help="comma-separated; empty for none")
+    ap.add_argument("--normalize", action="store_true")
+    ap.add_argument("--threads", type=int, default=16)
+    ap.add_argument("--pipeline-revision", default="")
+    ap.add_argument("--container", default="")
+    return ap.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    sc.settings.n_jobs = args.threads
+    steps = []
+
+    adata = sc.read_h5ad(args.input)
+    steps.append(f"read {adata.n_obs:,} x {adata.n_vars:,}")
+
+    problems = check_input(adata, args.normalize)
+    if problems:
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+
+    adata.X = adata.X.astype(np.float32)
+    steps.append("cast X to float32")
+
+    dropped = merge_case_duplicate_columns(adata.obs)
+    steps.append(f"merged case-duplicate obs columns, dropped {dropped}")
+    n_unknown = add_identity_columns(
+        adata, args.library_column, re.compile(args.site_regex),
+        re.compile(args.patient_regex), args.patient_prefix,
+    )
+    steps.append(f"added library, site, patient; {n_unknown:,} cells with unknown site")
+    add_tcr_status(adata, args.tcr_column)
+    steps.append(f"tcr_status from {args.tcr_column!r}" if args.tcr_column else "tcr_status skipped")
+
+    embed(adata, args.n_hvg, args.n_pcs, args.n_neighbors, args.leiden_resolution)
+    steps.append(f"embedding: {args.n_hvg} HVGs, {args.n_pcs} PCs, "
+                 f"{args.n_neighbors} neighbors, UMAP, Leiden resolution {args.leiden_resolution}")
+    finalize_indexes(adata)
+
+    axes = [a for a in args.atomic_axes.split(",") if a]
+    problems = check_prepared(adata, axes)
+    if problems:
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+
+    out = Path(args.output)
+    adata.write_h5ad(out)
+    steps.append(f"wrote {out.name}")
+
+    src = Path(args.input)
+    provenance = {
+        "file": {"name": out.name, "size_bytes": out.stat().st_size, "sha256": sha256_of(out),
+                 "n_obs": adata.n_obs, "n_vars": adata.n_vars},
+        "source": {"path": args.input, "size_bytes": src.stat().st_size,
+                   "sha256": sha256_of(src)},
+        "parameters": vars(args),
+        "pipeline": {"revision": args.pipeline_revision, "container": args.container},
+        "environment": pinned_versions(),
+        "steps": steps,
+        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    Path(args.provenance).write_text(json.dumps(provenance, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

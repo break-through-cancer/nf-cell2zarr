@@ -1,11 +1,14 @@
 """Unit tests for bin/prepare_h5ad.py."""
 
+import hashlib
 import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
 
 import anndata as ad
+import h5py
 import numpy as np
 import pandas as pd
 import pytest
@@ -17,6 +20,7 @@ prep = importlib.util.module_from_spec(SPEC)
 sys.modules["prepare_h5ad"] = prep
 SPEC.loader.exec_module(prep)
 
+FIXTURE = str(Path(__file__).parent / "data" / "tiny_merge.h5ad")
 SITE = re.compile(r"(DFCI-?\d+|JHU\d+|MSK\d+|GBM-001)")
 PAT = re.compile(r"GBM-001-(\d{3})")
 
@@ -88,3 +92,55 @@ def test_case_duplicates_keep_numeric_dtype():
     assert list(obs.columns) == ["score"]
     assert obs["score"].tolist() == [1.0, 2.0, 3.0]
     assert obs["score"].dtype.kind == "f"
+
+
+def test_check_input_rejects_non_integer_x_when_normalizing():
+    adata = ad.AnnData(X=np.array([[0.5, 1.0], [2.0, 0.0]], dtype=np.float32))
+    assert any("integer" in p for p in prep.check_input(adata, normalize=True))
+    assert prep.check_input(adata, normalize=False) == []
+
+
+def test_check_prepared_names_every_problem():
+    obs = pd.DataFrame(
+        {"lib": ["a", "b"], "x": [1, 2], "X": [1, 2], "flag": [True, False]},
+        index=pd.Index(["c0", "c1"], name="lib"),
+    )
+    adata = ad.AnnData(X=np.zeros((2, 2), dtype=np.float32), obs=obs)
+    text = "\n".join(prep.check_prepared(adata, ["leiden", "flag"]))
+    for needle in ("'lib'", "'x'", "X_pca", "X_umap", "'leiden'", "'flag'"):
+        assert needle in text
+
+
+def test_cli_end_to_end_on_fixture(tmp_path):
+    rc = prep.main(["--input", FIXTURE, "--output", str(tmp_path / "out.h5ad"),
+                    "--provenance", str(tmp_path / "provenance.json"),
+                    "--n-hvg", "20", "--n-pcs", "10", "--n-neighbors", "10",
+                    "--atomic-axes", "leiden,library,patient,site,tcr_status",
+                    "--normalize", "--threads", "2",
+                    "--pipeline-revision", "test", "--container", "test"])
+    assert rc == 0
+    out = ad.read_h5ad(tmp_path / "out.h5ad")
+    assert out.X.dtype == np.float32
+    assert "Modality" not in out.obs and "modality" in out.obs
+    assert {"library", "site", "patient", "tcr_status", "leiden"} <= set(out.obs)
+    assert out.obsm["X_pca"].shape == (200, 10) and out.obsm["X_umap"].shape == (200, 2)
+    assert out.obs.index.name is None and out.var.index.name is None
+    with h5py.File(tmp_path / "out.h5ad") as f:  # Review Focus 1
+        assert isinstance(f["obs"]["_index"], h5py.Dataset)
+        assert isinstance(f["var"]["_index"], h5py.Dataset)
+    prov = json.loads((tmp_path / "provenance.json").read_text())
+    assert prov["file"]["sha256"] == hashlib.sha256((tmp_path / "out.h5ad").read_bytes()).hexdigest()
+    assert prov["file"]["n_obs"] == 200
+    assert prov["environment"]["scanpy"] == "1.12.5"
+
+
+def test_cli_fails_fast_on_bad_input(tmp_path):
+    src = ad.read_h5ad(FIXTURE)
+    src.X = src.X * 0.5
+    src.write_h5ad(tmp_path / "half.h5ad")
+    rc = prep.main(["--input", str(tmp_path / "half.h5ad"),
+                    "--output", str(tmp_path / "out.h5ad"),
+                    "--provenance", str(tmp_path / "provenance.json"), "--normalize"])
+    assert rc != 0
+    assert not (tmp_path / "out.h5ad").exists()
+    assert not (tmp_path / "provenance.json").exists()
