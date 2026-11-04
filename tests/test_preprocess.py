@@ -95,3 +95,78 @@ def test_strata_axes_are_preserved_when_set():
     )
     preprocess.run(ds)
     assert ds.params["atomic_axes"] == "cell_type,treatment"
+
+
+def test_prepare_selects_h5ad_by_name():
+    ds = FakeDataset(
+        ["s3://b/d/merged.h5ad", "s3://b/d/merged.tcr_only.h5ad"],
+        {"two_phase": True, "prepare": True, "h5ad_name": "merged.h5ad"},
+    )
+    preprocess.run(ds)
+    assert ds.params["input"] == "s3://b/d/merged.h5ad"
+    assert "h5ad_name" not in ds.params
+
+
+def test_prepare_with_missing_name_lists_what_exists():
+    ds = FakeDataset(
+        ["s3://b/d/a.h5ad", "s3://b/d/b.h5ad"],
+        {"two_phase": True, "prepare": True, "h5ad_name": "merged.h5ad"},
+    )
+    with pytest.raises(ValueError, match=r"merged\.h5ad.*a\.h5ad.*b\.h5ad"):
+        preprocess.run(ds)
+
+
+def test_without_prepare_multiple_h5ads_still_rejected():
+    ds = FakeDataset(
+        ["s3://b/a.h5ad", "s3://b/b.h5ad"],
+        {"two_phase": True, "prepare": False, "h5ad_name": "a.h5ad"},
+    )
+    with pytest.raises(ValueError, match="exactly one"):
+        preprocess.run(ds)
+
+
+def test_h5ad_name_is_removed_even_without_prepare():
+    ds = FakeDataset(
+        ["s3://b/a.h5ad"],
+        {"two_phase": True, "prepare": False, "h5ad_name": "merged.h5ad"},
+    )
+    preprocess.run(ds)
+    assert "h5ad_name" not in ds.params
+
+
+def test_blank_tcr_column_passes_through_as_empty_string():
+    # "" means "skip tcr_status" to Nextflow, so it must not be removed.
+    ds = FakeDataset(
+        ["s3://b/a.h5ad"], {"two_phase": True, "tcr_column": ""}
+    )
+    preprocess.run(ds)
+    assert ds.params["tcr_column"] == ""
+
+
+def test_regex_params_are_not_mangled():
+    regex = r"GBM-001-(\d{1,3}) | x"
+    ds = FakeDataset(
+        ["s3://b/a.h5ad"],
+        {"two_phase": True, "site_regex": regex, "patient_regex": regex},
+    )
+    preprocess.run(ds)
+    assert ds.params["site_regex"] == regex
+    assert ds.params["patient_regex"] == regex
+
+
+def test_blank_prepare_params_are_removed_so_defaults_apply():
+    ds = FakeDataset(
+        ["s3://b/a.h5ad"],
+        {
+            "two_phase": True,
+            "n_hvg": None,
+            "n_pcs": "",
+            "library_column": "  ",
+            "site_regex": "",
+            "n_neighbors": 15,
+        },
+    )
+    preprocess.run(ds)
+    for name in ("n_hvg", "n_pcs", "library_column", "site_regex"):
+        assert name not in ds.params
+    assert ds.params["n_neighbors"] == 15

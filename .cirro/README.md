@@ -21,6 +21,16 @@ These are specific to your dataset — if you do not know them, leave the field
 blank, run the conversion, and inspect the resulting store's `obs` columns
 before running again with the axes filled in.
 
+## Preparation (optional)
+
+Off by default. Turn it on for the GBM master merge: a raw merged `h5ad` that
+still needs embedding and annotation before conversion. Because the dataset may
+hold several `.h5ad` files, set **Input h5ad file name** (default
+`merged.h5ad`) to pick the one to prepare. The remaining fields default to the
+GBM merge's values. Blank numeric and text fields fall back to those defaults;
+a blank **TCR column** skips `tcr_status`. Prepared outputs are published under
+`prepared/` in the output dataset.
+
 ## Defaults
 
 The conversion defaults match the shipped SPECTRUM store: one gene per chunk so

@@ -29,9 +29,29 @@ OPTIONAL = (
     "encoding_config",
 )
 
+# Preparation params that fall back to nextflow.config defaults when blank. Kept
+# apart from OPTIONAL: _clean_optional re-joins on commas, which would mangle a
+# regex such as a{1,3}. tcr_column is deliberately absent: a blank value is
+# meaningful ("skip tcr_status") and must reach Nextflow as "".
+PREPARE_OPTIONAL = (
+    "n_hvg",
+    "n_pcs",
+    "n_neighbors",
+    "leiden_resolution",
+    "library_column",
+    "site_regex",
+    "patient_regex",
+    "patient_prefix",
+)
+
 
 def _resolve_input(ds):
-    """Return the single .h5ad path in the input dataset."""
+    """Return the .h5ad path to run on.
+
+    Under prepare the dataset holds several files (the raw merge plus any
+    siblings), so the one named by h5ad_name is selected. Otherwise exactly one
+    .h5ad must be present.
+    """
     paths = [str(p) for p in ds.files["file"].tolist()]
     h5ads = [p for p in paths if p.endswith(".h5ad")]
 
@@ -41,6 +61,16 @@ def _resolve_input(ds):
             "AnnData only; Loom (.loom) and Seurat (.h5seurat) files in a "
             f"Single-Cell Dataset are not supported. Found: {paths}"
         )
+
+    if ds.params.get("prepare"):
+        name = ds.params.get("h5ad_name") or "merged.h5ad"
+        matches = [p for p in h5ads if p.rsplit("/", 1)[-1] == name]
+        if not matches:
+            raise ValueError(
+                f"Preparation was asked to use '{name}', but the input dataset "
+                f"has no .h5ad file with that name. Found: {h5ads}"
+            )
+        return matches[0]
 
     if len(h5ads) > 1:
         raise ValueError(
@@ -80,12 +110,22 @@ def _clean_optional(ds):
             ds.add_param(name, ",".join(p.strip() for p in value.split(",") if p.strip()))
 
 
+def _clean_prepare(ds):
+    """Drop blank preparation params verbatim; h5ad_name is preprocess-only."""
+    for name in PREPARE_OPTIONAL:
+        value = ds.params.get(name)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            ds.remove_param(name)
+
+
 def run(ds):
     """Entry point, factored out so it can be unit tested."""
     _check_conversion_mode(ds)
     _clean_optional(ds)
+    _clean_prepare(ds)
 
     h5ad = _resolve_input(ds)
+    ds.remove_param("h5ad_name")  # consumed above; Nextflow has no such param
     ds.add_param("input", h5ad)
 
     ds.logger.info(f"nf-cell2zarr input: {h5ad}")
