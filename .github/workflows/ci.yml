@@ -30,7 +30,7 @@ jobs:
         run: uv run --with anndata --with scipy python tests/data/make_fixture.py
 
       - name: Test the preprocess script
-        run: uv run --frozen --group dev pytest tests/test_preprocess.py -v
+        run: uv run --frozen --group dev pytest tests/test_preprocess.py tests/test_cirro_config.py -v
 
       - name: Test the prepare script
         run: uv run --with-requirements containers/prepare/requirements.txt --group dev pytest tests/test_prepare.py tests/test_compare_prepared.py -v
