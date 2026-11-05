@@ -207,3 +207,69 @@ def test_prepare_rejects_ambiguous_h5ad_name():
     )
     with pytest.raises(ValueError, match=r"more than one.*x/merged\.h5ad.*y/merged\.h5ad"):
         preprocess.run(ds)
+
+
+# A dataset produced by another pipeline (e.g. sazaidi-scratch-tcrmerge, which
+# has no file-mapping rules) reaches preprocess with an empty files.csv. The
+# input dataset folders arrive instead as input_paths ($.inputs[*].dataPath).
+TCRMERGE = "s3://project-x/datasets/cee37219/data"
+TCRMERGE_FILES = [
+    f"{TCRMERGE}/merged.h5ad",
+    f"{TCRMERGE}/merged.tcr_only.h5ad",
+    f"{TCRMERGE}/tables/merged_obs.tsv",
+]
+
+
+@pytest.fixture
+def s3_listing(monkeypatch):
+    calls = []
+
+    def fake_list(prefix):
+        calls.append(prefix)
+        return [f for f in TCRMERGE_FILES if f.startswith(prefix.rstrip("/") + "/")]
+
+    monkeypatch.setattr(preprocess, "_list_s3", fake_list)
+    return calls
+
+
+def test_pipeline_output_input_is_listed_from_input_paths(s3_listing):
+    ds = FakeDataset([], {"two_phase": True, "prepare": True, "h5ad_name": "merged.h5ad",
+                          "input_paths": [TCRMERGE]})
+    preprocess.run(ds)
+    assert ds.params["input"] == f"{TCRMERGE}/merged.h5ad"
+    assert s3_listing == [TCRMERGE]
+
+
+def test_input_paths_given_as_a_single_string(s3_listing):
+    ds = FakeDataset([], {"two_phase": True, "prepare": True, "h5ad_name": "merged.h5ad",
+                          "input_paths": TCRMERGE})
+    preprocess.run(ds)
+    assert ds.params["input"] == f"{TCRMERGE}/merged.h5ad"
+
+
+def test_input_paths_never_reaches_nextflow(s3_listing):
+    listed = FakeDataset([], {"two_phase": True, "prepare": True, "h5ad_name": "merged.h5ad",
+                              "input_paths": [TCRMERGE]})
+    uploaded = FakeDataset(["s3://b/a.h5ad"], {"two_phase": True, "input_paths": ["s3://b"]})
+    for ds in (listed, uploaded):
+        preprocess.run(ds)
+        assert "input_paths" not in ds.params
+
+
+def test_files_csv_wins_over_input_paths(s3_listing):
+    ds = FakeDataset(["s3://b/a.h5ad"], {"two_phase": True, "input_paths": [TCRMERGE]})
+    preprocess.run(ds)
+    assert ds.params["input"] == "s3://b/a.h5ad"
+    assert s3_listing == []
+
+
+def test_pipeline_output_without_prepare_still_needs_exactly_one_h5ad(s3_listing):
+    ds = FakeDataset([], {"two_phase": True, "input_paths": [TCRMERGE]})
+    with pytest.raises(ValueError, match="2 .h5ad files"):
+        preprocess.run(ds)
+
+
+def test_empty_files_and_no_input_paths_reports_no_h5ad(s3_listing):
+    ds = FakeDataset([], {"two_phase": True})
+    with pytest.raises(ValueError, match="no .h5ad file"):
+        preprocess.run(ds)
