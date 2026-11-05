@@ -24,7 +24,7 @@ emulation — fine for tests, and irrelevant on AWS Batch.
 | `input` | — | Path to an `.h5ad` file. Required. |
 | `outdir` | `results` | Where the finished store is published. |
 | `prepare` | `false` | Run the optional PREPARE stage (embed and annotate a raw merge) before conversion. |
-| `prepare_container` | `ghcr.io/break-through-cancer/nf-cell2zarr-prepare:sha-b1923f2@sha256:be57110e…` | PREPARE image, pinned by tag and digest. Published by `.github/workflows/prepare-image.yml`. |
+| `prepare_container` | `ghcr.io/break-through-cancer/nf-cell2zarr-prepare@sha256:be57110e…` (tag `sha-b1923f2`) | PREPARE image, pinned by digest (AWS Batch rejects tag@digest). Published by `.github/workflows/prepare-image.yml`. |
 | `n_hvg` | `3000` | Highly variable genes used for PCA (prepare). |
 | `n_pcs` | `50` | Principal components computed (prepare). |
 | `n_neighbors` | `15` | Neighbours in the kNN graph behind UMAP and Leiden (prepare). |
