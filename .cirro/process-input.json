@@ -1,5 +1,6 @@
 {
   "outdir": "$.dataset.dataPath",
+  "input_paths": "$.inputs[*].dataPath",
   "two_phase": "$.dataset.params.conversion.two_phase",
   "cell_chunk_size": "$.dataset.params.conversion.cell_chunk_size",
   "var_chunk_size": "$.dataset.params.conversion.var_chunk_size",

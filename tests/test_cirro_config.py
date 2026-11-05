@@ -31,13 +31,17 @@ def _form():
     return form.get("form", form)
 
 
+# Keys Cirro supplies from the run itself rather than from the form.
+NOT_FROM_FORM = {"outdir", "input_paths"}
+
+
 def test_every_form_param_maps_from_dataset_params():
     """Cirro resolves form values under $.dataset.params; any other root is empty."""
     form_paths = set(_form_paths(_form()))
     mapping = _input_mapping()
     bad = {}
     for key, expr in mapping.items():
-        if key == "outdir":
+        if key in NOT_FROM_FORM:
             continue
         prefix = "$.dataset.params."
         if not expr.startswith(prefix):
@@ -62,6 +66,12 @@ def test_every_form_field_is_mapped():
 def test_outdir_is_the_output_dataset():
     """Without this, outputs publish to ./results on the headnode and are lost."""
     assert _input_mapping().get("outdir") == "$.dataset.dataPath"
+
+
+def test_input_paths_are_the_input_datasets():
+    """files.csv is empty for a dataset written by another pipeline (the GBM merge);
+    preprocess then lists these folders."""
+    assert _input_mapping().get("input_paths") == "$.inputs[*].dataPath"
 
 
 # Copied from Nextflow 25.10.8, modules/nextflow/src/main/groovy/nextflow/container/

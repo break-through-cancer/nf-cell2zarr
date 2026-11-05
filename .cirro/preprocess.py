@@ -45,6 +45,34 @@ PREPARE_OPTIONAL = (
 )
 
 
+def _list_s3(prefix):
+    """Every object key under an s3:// prefix, as s3:// URIs."""
+    import boto3
+
+    bucket, _, key = prefix.removeprefix("s3://").partition("/")
+    key = key.rstrip("/") + "/"
+    pages = boto3.client("s3").get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key)
+    return [f"s3://{bucket}/{obj['Key']}" for page in pages for obj in page.get("Contents", [])]
+
+
+def _input_files(ds):
+    """The input dataset's files.
+
+    Cirro fills files.csv only for datasets whose process has file-mapping rules,
+    such as an uploaded Single-Cell Dataset. A dataset written by another
+    pipeline (the GBM merge, from sazaidi-scratch-tcrmerge) arrives with an
+    empty files.csv, so fall back to listing the input datasets' folders, which
+    process-input.json passes as input_paths.
+    """
+    paths = [str(p) for p in ds.files["file"].tolist()]
+    if paths:
+        return paths
+    roots = ds.params.get("input_paths") or []
+    if isinstance(roots, str):
+        roots = [roots]
+    return [p for root in roots for p in _list_s3(root)]
+
+
 def _resolve_input(ds):
     """Return the .h5ad path to run on.
 
@@ -52,7 +80,7 @@ def _resolve_input(ds):
     siblings), so the one named by h5ad_name is selected. Otherwise exactly one
     .h5ad must be present.
     """
-    paths = [str(p) for p in ds.files["file"].tolist()]
+    paths = _input_files(ds)
     h5ads = [p for p in paths if p.endswith(".h5ad")]
 
     if not h5ads:
@@ -134,7 +162,9 @@ def run(ds):
     _clean_prepare(ds)
 
     h5ad = _resolve_input(ds)
-    ds.remove_param("h5ad_name", force=True)  # consumed above; Nextflow has no such param
+    # consumed above; Nextflow has no such params
+    ds.remove_param("h5ad_name", force=True)
+    ds.remove_param("input_paths", force=True)
     ds.add_param("input", h5ad, overwrite=True)
 
     ds.logger.info(f"nf-cell2zarr input: {h5ad}")
